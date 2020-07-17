@@ -722,9 +722,8 @@ describe('Mocha', function() {
             mocha.run();
           } catch (ignored) {
           } finally {
-            // this used to get called _once_, but no longer does, because the
-            // call to `Runner#run` executes asynchronously.
-            expect(runner.run, 'was not called');
+            // it'll be 0 or 1, depending on timing.
+            expect(runner.run.callCount, 'to be less than', 2);
           }
         });
       });
