@@ -1,77 +1,34 @@
 'use strict';
 
+const escapeRegExp = require('escape-string-regexp');
+const {sync: rimraf} = require('rimraf');
+const os = require('os');
 const fs = require('fs-extra');
-var format = require('util').format;
-var spawn = require('cross-spawn').spawn;
-var path = require('path');
-var Base = require('../../lib/reporters/base');
-var debug = require('debug')('mocha:tests:integration:helpers');
-var DEFAULT_FIXTURE = resolveFixturePath('__default__');
-var MOCHA_EXECUTABLE = require.resolve('../../bin/mocha');
-var _MOCHA_EXECUTABLE = require.resolve('../../bin/_mocha');
+const {format} = require('util');
+const path = require('path');
+const Base = require('../../lib/reporters/base');
+const debug = require('debug')('mocha:tests:integration:helpers');
+const touch = require('touch');
 
-module.exports = {
-  DEFAULT_FIXTURE: DEFAULT_FIXTURE,
+/**
+ * Path to `mocha` executable
+ */
+const MOCHA_EXECUTABLE = require.resolve('../../bin/mocha');
 
-  /**
-   * regular expression used for splitting lines based on new line / dot symbol.
-   */
-  splitRegExp: new RegExp('[\\n' + Base.symbols.dot + ']+'),
+/**
+ * regular expression used for splitting lines based on new line / dot symbol.
+ */
+const SPLIT_DOT_REPORTER_REGEXP = new RegExp('[\\n' + Base.symbols.dot + ']+');
 
-  /**
-   * Invokes the mocha binary. Accepts an array of additional command line args
-   * to pass. The callback is invoked with the exit code and output. Optional
-   * current working directory as final parameter.
-   *
-   * By default, `STDERR` is ignored. Pass `{stdio: 'pipe'}` as `opts` if you
-   * want it.
-   *
-   * In most cases runMocha should be used instead.
-   *
-   * Example response:
-   * {
-   *   code:    1,
-   *   output:  '...'
-   * }
-   *
-   * @param {Array<string>} args - Extra args to mocha executable
-   * @param {Function} done - Callback
-   * @param {Object} [opts] - Options for `spawn()`
-   */
-  invokeMocha: invokeMocha,
+/**
+ * Name of "default" fixture file.
+ */
+const DEFAULT_FIXTURE = '__default__';
 
-  invokeMochaAsync: invokeMochaAsync,
-
-  invokeNode: invokeNode,
-
-  getSummary: getSummary,
-
-  /**
-   * Resolves the path to a fixture to the full path.
-   */
-  resolveFixturePath: resolveFixturePath,
-
-  toJSONRunResult: toJSONRunResult,
-
-  /**
-   * Given a regexp-like string, escape it so it can be used with the `RegExp` constructor
-   * @param {string} str - string to be escaped
-   * @returns {string} Escaped string
-   */
-  escapeRegExp: function escapeRegExp(str) {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
-  },
-
-  runMocha,
-  runMochaJSON,
-  runMochaAsync,
-  runMochaJSONAsync,
-  runMochaWatch,
-  runMochaWatchJSON,
-  copyFixture,
-  touchFile,
-  replaceFileContents
-};
+/**
+ * Path to "default" fixture file
+ */
+const DEFAULT_FIXTURE_PATH = resolveFixturePath(DEFAULT_FIXTURE);
 
 /**
  * Invokes the mocha binary for the given fixture with color output disabled.
@@ -92,76 +49,65 @@ module.exports = {
  * }
  *
  * @param {string} fixturePath - Path to fixture .js file
- * @param {string[]} args - Extra args to mocha executable
- * @param {Function} fn - Callback
+ * @param {string[]|SummarizedResultCallback} args - Extra args to mocha executable
+ * @param {SummarizedResultCallback|Object} done - Callback
  * @param {Object} [opts] - Options for `spawn()`
- * @returns {ChildProcess} Mocha process
+ * @returns {ChildProcess} Subprocess process
  */
-function runMocha(fixturePath, args, fn, opts) {
+function runMocha(fixturePath, args, done, opts = {}) {
   if (typeof args === 'function') {
-    opts = fn;
-    fn = args;
+    opts = done;
+    done = args;
     args = [];
   }
 
-  var path;
-
-  path = resolveFixturePath(fixturePath);
-  args = args || [];
-
-  return invokeSubMocha(
-    args.concat(path),
-    function(err, res) {
+  return invokeMocha(
+    [...args, resolveFixturePath(fixturePath)],
+    (err, res) => {
       if (err) {
-        return fn(err);
+        return done(err);
       }
 
-      fn(null, getSummary(res));
+      done(null, getSummary(res));
     },
     opts
   );
 }
 
 /**
- * Invokes the mocha binary for the given fixture using the JSON reporter,
- * returning the parsed output, as well as exit code.
+ * Invokes the mocha executable for the given fixture using the `json` reporter,
+ * calling callback `done` with parsed output.
+ *
+ * Use when you expect `mocha` _not_ to fail (test failures OK); the output from
+ * the `json` reporter--and thus the entire subprocess--must be valid JSON!
  *
  * By default, `STDERR` is ignored. Pass `{stdio: 'pipe'}` as `opts` if you
  * want it.
- * @param {string} fixturePath - Path from __dirname__
- * @param {string[]} args - Array of args
- * @param {Function} fn - Callback
+ * @param {string} fixturePath - Path from `__dirname__`
+ * @param {string[]|JSONResultCallback} args - Args to `mocha` or callback
+ * @param {JSONResultCallback|Object} done - Callback or options
  * @param {Object} [opts] - Opts for `spawn()`
- * @returns {*} Parsed object
+ * @returns {ChildProcess} Subprocess instance
  */
-function runMochaJSON(fixturePath, args, fn, opts) {
+function runMochaJSON(fixturePath, args, done, opts) {
   if (typeof args === 'function') {
-    opts = fn;
-    fn = args;
+    opts = done;
+    done = args;
     args = [];
   }
 
-  var path;
-
-  path = resolveFixturePath(fixturePath);
-  args = (args || []).concat('--reporter', 'json', path);
-
   return invokeMocha(
-    args,
-    function(err, res) {
+    [...args, '--reporter', 'json', resolveFixturePath(fixturePath)],
+    (err, res) => {
       if (err) {
-        return fn(err);
+        return done(err);
       }
 
-      var result;
+      let result;
       try {
-        // attempt to catch a JSON parsing error *only* here.
-        // previously, the callback was called within this `try` block,
-        // which would result in errors thrown from the callback
-        // getting caught by the `catch` block below.
-        result = toJSONRunResult(res);
+        result = toJSONResult(res);
       } catch (err) {
-        return fn(
+        return done(
           new Error(
             format(
               'Failed to parse JSON reporter output. Error:\n%O\nResult:\n%O',
@@ -171,7 +117,7 @@ function runMochaJSON(fixturePath, args, fn, opts) {
           )
         );
       }
-      fn(null, result);
+      done(null, result);
     },
     opts
   );
@@ -208,6 +154,7 @@ function runMochaAsync(fixturePath, args, opts) {
  * @param {string} fixturePath - Path to (or name of, or basename of) fixture file
  * @param {Options} [args] - Command-line args
  * @param {Object} [opts] - Options for `child_process.spawn`
+ * @returns {Promise<JSONResult>}
  */
 function runMochaJSONAsync(fixturePath, args, opts) {
   return new Promise(function(resolve, reject) {
@@ -226,18 +173,15 @@ function runMochaJSONAsync(fixturePath, args, opts) {
 }
 
 /**
- * Coerce output as returned by _spawnMochaWithListeners using JSON reporter into a JSONRunResult as
+ * Coerce output as returned by _spawnMochaWithListeners using JSON reporter into a JSONResult as
  * recognized by our custom unexpected assertions
- * @param {string} result - Raw stdout from Mocha run using JSON reporter
- * @private
+ * @param {RawResult} result - Raw stdout from Mocha run using JSON reporter
+ * @returns {JSONResult}
  */
-function toJSONRunResult(result) {
+function toJSONResult(result) {
   const {code, command, output} = result;
   try {
-    result = JSON.parse(output);
-    result.code = code;
-    result.command = command;
-    return result;
+    return {...JSON.parse(output), code, command};
   } catch (err) {
     throw new Error(
       `Couldn't parse JSON: ${err.message}\n\nOriginal result output: ${result.output}`
@@ -258,12 +202,13 @@ function toJSONRunResult(result) {
  * - The {@link DEFAULT_FIXTURE} file is used if no arguments are provided.
  *
  * @param {string[]|*} [args] - Arguments to `spawn`
- * @returns string[]
+ * @returns {string[]}
  */
-function defaultArgs(args) {
-  var newArgs = (!args || !args.length ? [DEFAULT_FIXTURE] : args).concat([
+function defaultArgs(args = [DEFAULT_FIXTURE_PATH]) {
+  const newArgs = [
+    ...(!args.length ? [DEFAULT_FIXTURE_PATH] : args),
     '--no-color'
-  ]);
+  ];
   if (!newArgs.some(arg => /--(no-)?bail/.test(arg))) {
     newArgs.push('--no-bail');
   }
@@ -273,15 +218,26 @@ function defaultArgs(args) {
   return newArgs;
 }
 
-function invokeMocha(args, fn, opts) {
+/**
+ * Invoke `mocha` with default arguments. Calls `done` upon exit. Does _not_ accept a fixture path.
+ *
+ * Good for testing error conditions. This is low-level, and you likely want
+ * {@link runMocha} or even {@link runMochaJSON} if you are running test fixtures.
+ *
+ * @param {string[]|RawResultCallback} args - Args to `mocha` or callback
+ * @param {RawResultCallback|Object} done - Callback or options
+ * @param {Object} [opts] - Options
+ * @returns {ChildProcess}
+ */
+function invokeMocha(args, done, opts = {}) {
   if (typeof args === 'function') {
-    opts = fn;
-    fn = args;
+    opts = done;
+    done = args;
     args = [];
   }
-  return _spawnMochaWithListeners(
+  return createSubprocess(
     defaultArgs([MOCHA_EXECUTABLE].concat(args)),
-    fn,
+    done,
     opts
   );
 }
@@ -297,12 +253,12 @@ function invokeMocha(args, fn, opts) {
  *
  * @param {string[]} args - Array of args
  * @param {Object} [opts] - Opts for `spawn()`
- * @returns {[ChildProcess|Promise<Result>]}
+ * @returns {[import('child_process').ChildProcess,Promise<RawResult>]} A tuple of process and result promise
  */
-function invokeMochaAsync(args, opts) {
+function invokeMochaAsync(args, opts = {}) {
   let mochaProcess;
   const resultPromise = new Promise((resolve, reject) => {
-    mochaProcess = _spawnMochaWithListeners(
+    mochaProcess = createSubprocess(
       defaultArgs([MOCHA_EXECUTABLE].concat(args)),
       (err, result) => {
         if (err) {
@@ -318,62 +274,74 @@ function invokeMochaAsync(args, opts) {
 }
 
 /**
- * Invokes Node without Mocha binary with the given arguments,
- * when Mocha is used programmatically.
+ * Invokes subprocess with currently-running `node`.
+ *
+ * Useful for running certain fixtures as scripts.
+ *
+ * @param {string[]|RawResultCallback} args - Args to `mocha` or callback
+ * @param {RawResultCallback|Object} done - Callback or options
+ * @param {Object} [opts] - Options
+ * @returns {ChildProcess}
  */
-function invokeNode(args, fn, opts) {
+function invokeNode(args, done, opts = {}) {
   if (typeof args === 'function') {
-    opts = fn;
-    fn = args;
+    opts = done;
+    done = args;
     args = [];
   }
-  return _spawnMochaWithListeners(args, fn, opts);
-}
-
-function invokeSubMocha(args, fn, opts) {
-  if (typeof args === 'function') {
-    opts = fn;
-    fn = args;
-    args = [];
-  }
-  return _spawnMochaWithListeners(
-    defaultArgs([_MOCHA_EXECUTABLE].concat(args)),
-    fn,
-    opts
-  );
+  return createSubprocess(args, done, opts);
 }
 
 /**
- * Spawns Mocha in a subprocess and returns an object containing its output and exit code
+ * Creates a subprocess and calls callback `done` when it has exited.
+ *
+ * This is the most low-level function and should _not_ be exported.
  *
  * @param {string[]} args - Path to executable and arguments
- * @param {Function} fn - Callback
- * @param {Object|string} [opts] - Options to `cross-spawn`, or 'pipe' for shortcut to `{stdio: pipe}`
- * @returns {ChildProcess}
- * @private
+ * @param {RawResultCallback} done - Callback
+ * @param {Object|string} [opts] - Options to `cross-spawn` or `child_process.fork` or 'pipe' for shortcut to `{stdio: pipe}`
+ * @param {boolean} [opts.fork] - If `true`, use `child_process.fork` instead
+ * @returns {import('child_process').ChildProcess}
  */
-function _spawnMochaWithListeners(args, fn, opts) {
-  var output = '';
-  opts = opts || {};
+function createSubprocess(args, done, opts = {}) {
+  let output = '';
+
   if (opts === 'pipe') {
     opts = {stdio: ['inherit', 'pipe', 'pipe']};
   }
-  var env = Object.assign({}, process.env);
+
+  const env = {...process.env};
   // prevent DEBUG from borking STDERR when piping, unless explicitly set via `opts`
   delete env.DEBUG;
 
-  opts = Object.assign(
-    {
-      cwd: process.cwd(),
-      stdio: ['inherit', 'pipe', 'inherit'],
-      env: env
-    },
-    opts
-  );
+  opts = {
+    cwd: process.cwd(),
+    stdio: ['inherit', 'pipe', 'inherit'],
+    env,
+    ...opts
+  };
 
-  debug('spawning: %s', [process.execPath].concat(args).join(' '));
-  var mocha = spawn(process.execPath, args, opts);
-  var listener = function(data) {
+  /**
+   * @type {import('child_process').ChildProcess}
+   */
+  let mocha;
+  if (opts.fork) {
+    const {fork} = require('child_process');
+    // to use ipc, we need a fourth item in `stdio` array.
+    // opts.stdio is usually an array of length 3, but it could be smaller
+    // (pad with `null`)
+    for (let i = opts.stdio.length; i < 4; i++) {
+      opts.stdio.push(i === 3 ? 'ipc' : null);
+    }
+    debug('forking: %s', args.join(' '));
+    mocha = fork(args[0], args.slice(1), opts);
+  } else {
+    const {spawn} = require('cross-spawn');
+    debug('spawning: %s', [process.execPath].concat(args).join(' '));
+    mocha = spawn(process.execPath, args, opts);
+  }
+
+  const listener = data => {
     output += data;
   };
 
@@ -381,13 +349,13 @@ function _spawnMochaWithListeners(args, fn, opts) {
   if (mocha.stderr) {
     mocha.stderr.on('data', listener);
   }
-  mocha.on('error', fn);
+  mocha.on('error', done);
 
-  mocha.on('close', function(code) {
-    fn(null, {
-      output: output,
-      code: code,
-      args: args,
+  mocha.on('close', code => {
+    done(null, {
+      output,
+      code,
+      args,
       command: args.join(' ')
     });
   });
@@ -395,13 +363,19 @@ function _spawnMochaWithListeners(args, fn, opts) {
   return mocha;
 }
 
+/**
+ * Given a fixture "name" (a relative path from `${__dirname}/fixtures`),
+ * with or without extension, or an absolute path, resolve a fixture filepath
+ * @param {string} fixture - Fixture name
+ * @returns {string} Resolved filepath
+ */
 function resolveFixturePath(fixture) {
   if (path.extname(fixture) !== '.js' && path.extname(fixture) !== '.mjs') {
     fixture += '.fixture.js';
   }
   return path.isAbsolute(fixture)
     ? fixture
-    : path.join('test', 'integration', 'fixtures', fixture);
+    : path.resolve(__dirname, 'fixtures', fixture);
 }
 
 /**
@@ -422,7 +396,7 @@ function getSummary(res) {
 }
 
 /**
- * Runs the mocha binary in watch mode calls `change` and returns the
+ * Runs the mocha executable in watch mode calls `change` and returns the
  * raw result.
  *
  * The function starts mocha with the given arguments and `--watch` and
@@ -430,35 +404,67 @@ function getSummary(res) {
  * and waits until the second test run has been completed. Mocha is
  * killed and the result is returned.
  *
+ * On Windows, this will call `child_process.fork()` instead of `cross-spawn.spawn()`.
+ *
  * **Exit code will always be 0**
+ * @param {string[]} args - Array of argument strings
+ * @param {object|string} opts - If a `string`, then `cwd`, otherwise options for `cross-spawn.spawn` or `child_process.fork`
+ * @param {Function} change - A potentially `Promise`-returning callback to execute which will change a watched file
+ * @returns {Promise<RawResult>}
  */
-async function runMochaWatch(args, cwd, change) {
-  const [mochaProcess, resultPromise] = invokeMochaAsync([...args, '--watch'], {
-    cwd,
-    stdio: ['pipe', 'pipe', 'inherit']
-  });
-  await sleep(2000);
+async function runMochaWatchAsync(args, opts, change) {
+  if (typeof opts === 'string') {
+    opts = {cwd: opts};
+  }
+  opts = {sleepMs: 2000, ...opts, fork: process.platform === 'win32'};
+  opts.stdio = ['pipe', 'pipe', 'inherit'];
+  const [mochaProcess, resultPromise] = invokeMochaAsync(
+    [...args, '--watch'],
+    opts
+  );
+  await sleep(opts.sleepMs);
   await change(mochaProcess);
-  await sleep(2000);
-  mochaProcess.kill('SIGINT');
+  await sleep(opts.sleepMs);
+
+  if (
+    !(mochaProcess.connected
+      ? mochaProcess.send('SIGINT')
+      : mochaProcess.kill('SIGINT'))
+  ) {
+    throw new Error('failed to send signal to subprocess');
+  }
+
   const res = await resultPromise;
-  // we kill the process with sigint, so it will always appear as "failed" to our
+
+  // we kill the process with `SIGINT`, so it will always appear as "failed" to our
   // custom assertions (a non-zero exit code 130). just change it to 0.
   res.code = 0;
   return res;
 }
 
 /**
- * Runs the mocha binary in watch mode calls `change` and returns the
- * JSON reporter output.
+ * Runs the mocha executable in watch mode calls `change` and returns the
+ * JSON result.
  *
  * The function starts mocha with the given arguments and `--watch` and
  * waits until the first test run has completed. Then it calls `change`
  * and waits until the second test run has been completed. Mocha is
- * killed and the list of JSON outputs is returned.
+ * killed and the result is returned.
+ *
+ * On Windows, this will call `child_process.fork()` instead of `cross-spawn.spawn()`.
+ *
+ * **Exit code will always be 0**
+ * @param {string[]} args - Array of argument strings
+ * @param {object|string} opts - If a `string`, then `cwd`, otherwise options for `cross-spawn.spawn` or `child_process.fork`
+ * @param {Function} change - A potentially `Promise`-returning callback to execute which will change a watched file
+ * @returns {Promise<JSONResult>}
  */
-async function runMochaWatchJSON(args, cwd, change) {
-  const res = await runMochaWatch([...args, '--reporter', 'json'], cwd, change);
+async function runMochaWatchJSONAsync(args, opts, change) {
+  const res = await runMochaWatchAsync(
+    [...args, '--reporter', 'json'],
+    opts,
+    change
+  );
   return (
     res.output
       // eslint-disable-next-line no-control-regex
@@ -469,33 +475,56 @@ async function runMochaWatchJSON(args, cwd, change) {
 }
 
 /**
- * Synchronously touch a file by appending a space to the end. Creates
+ * Synchronously touch a file. Creates
  * the file and all its parent directories if necessary.
+ *
+ * @param {string} filepath - Path to file
  */
-function touchFile(file) {
-  fs.ensureDirSync(path.dirname(file));
-  fs.appendFileSync(file, ' ');
+function touchFile(filepath) {
+  fs.ensureDirSync(path.dirname(filepath));
+  touch.sync(filepath);
 }
 
 /**
  * Synchronously replace all substrings matched by `pattern` with
- * `replacement` in the file’s content.
+ * `replacement` in the contents of file at `filepath`
+ *
+ * @param {string} filepath - Path to file
+ * @param {RegExp|string} pattern - Search pattern
+ * @param {string} replacement - Replacement
  */
-function replaceFileContents(file, pattern, replacement) {
-  const contents = fs.readFileSync(file, 'utf-8');
+function replaceFileContents(filepath, pattern, replacement) {
+  const contents = fs.readFileSync(filepath, 'utf-8');
   const newContents = contents.replace(pattern, replacement);
-  fs.writeFileSync(file, newContents, 'utf-8');
+  fs.writeFileSync(filepath, newContents, 'utf-8');
 }
 
 /**
  * Synchronously copy a fixture to the given destination file path.
  * Creates parent directories of the destination path if necessary.
+ *
+ * @param {string} fixtureName - Relative path from __dirname to fixture, or absolute path
+ * @param {*} dest - Destination directory
  */
 function copyFixture(fixtureName, dest) {
   const fixtureSource = resolveFixturePath(fixtureName);
   fs.ensureDirSync(path.dirname(dest));
   fs.copySync(fixtureSource, dest);
 }
+
+/**
+ * Creates a temporary directory
+ * @returns {Promise<CreateTempDirResult>} Temp dir path and cleanup function
+ */
+const createTempDir = async () => {
+  const dirpath = await fs.mkdtemp(path.join(os.tmpdir(), 'mocha-'));
+  return {
+    dirpath,
+    removeTempDir: () => {
+      rimraf(dirpath);
+    }
+  };
+};
 
 /**
  * Waits for `time` ms.
@@ -508,10 +537,96 @@ function sleep(time) {
   });
 }
 
+module.exports = {
+  DEFAULT_FIXTURE,
+  SPLIT_DOT_REPORTER_REGEXP,
+
+  createTempDir,
+  invokeMocha,
+  invokeMochaAsync,
+  invokeNode,
+  getSummary,
+  resolveFixturePath,
+  toJSONResult,
+  escapeRegExp,
+  runMocha,
+  runMochaJSON,
+  runMochaAsync,
+  runMochaJSONAsync,
+  runMochaWatchAsync,
+  runMochaWatchJSONAsync,
+  copyFixture,
+  touchFile,
+  replaceFileContents
+};
+
 /**
  * A summary of a `mocha` run
  * @typedef {Object} Summary
  * @property {number} passing - Number of passing tests
  * @property {number} pending - Number of pending tests
  * @property {number} failing - Number of failing tests
+ */
+
+/**
+ * An unprocessed result from a `mocha` run
+ * @typedef {Object} RawResult
+ * @property {string} output - Process output; _usually_ just stdout
+ * @property {number?} code - Exit code or `null` in some circumstances
+ * @property {string[]} args - Array of program arguments
+ * @property {string} command - Complete command executed
+ */
+
+/**
+ * The result of a `mocha` run using `json` reporter
+ * @typedef {Object} JSONResult
+ * @property {Object} stats - Statistics
+ * @property {Object[]} failures - Failure information
+ * @property {number?} code - Exit code or `null` in some circumstances
+ * @property {string} command - Complete command executed
+ */
+
+/**
+ * The result of a `mocha` run using `spec` reporter (parsed)
+ * @typedef {Summary} SummarizedResult
+ * @property {string} output - Process output; _usually_ just stdout
+ * @property {number?} code - Exit code or `null` in some circumstances
+ */
+
+/**
+ * Callback function run when `mocha` process execution complete
+ * @callback RawResultCallback
+ * @param {Error?} err - Error, if any
+ * @param {RawResult} result - Result of `mocha` run
+ * @returns {void}
+ */
+
+/**
+ * Callback function run when `mocha` process execution complete
+ * @callback JSONResultCallback
+ * @param {Error?} err - Error, if any
+ * @param {JSONResult} result - Result of `mocha` run
+ * @returns {void}
+ */
+
+/**
+ * Callback function run when `mocha` process execution complete
+ * @callback SummarizedResultCallback
+ * @param {Error?} err - Error, if any
+ * @param {SummarizedResult} result - Result of `mocha` run
+ * @returns {void}
+ */
+
+/**
+ * Return value when calling {@link createTempDir}
+ *
+ * @typedef {Object} CreateTempDirResult
+ * @property {string} dirname - Path of new temp dir
+ * @property {RemoveTempDirCallback} removeTempDir - "Cleanup" function to remove temp dir
+ */
+
+/**
+ * Cleanup function to remove temp dir
+ * @callback RemoveTempDirCallback
+ * @returns {void}
  */
