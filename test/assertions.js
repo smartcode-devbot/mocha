@@ -9,7 +9,8 @@ exports.mixinMochaAssertions = function(expect) {
       base: 'object',
       identify: function(v) {
         return (
-          Object.prototype.toString.call(v) === '[object Object]' &&
+          v !== null &&
+          typeof v === 'object' &&
           typeof v.output === 'string' &&
           'code' in v && // may be null
           Array.isArray(v.args)
@@ -17,12 +18,14 @@ exports.mixinMochaAssertions = function(expect) {
       }
     })
     .addType({
-      name: 'JSONRunResult',
+      name: 'JSONResult',
       base: 'object',
       identify: function(v) {
         return (
-          Object.prototype.toString.call(v) === '[object Object]' &&
-          Object.prototype.toString.call(v.stats) === '[object Object]' &&
+          v !== null &&
+          typeof v === 'object' &&
+          v.stats !== null &&
+          typeof v.stats === 'object' &&
           Array.isArray(v.failures) &&
           typeof v.code === 'number' &&
           typeof v.command === 'string'
@@ -30,7 +33,7 @@ exports.mixinMochaAssertions = function(expect) {
       }
     })
     .addType({
-      name: 'RawRunResult',
+      name: 'SummarizedResult',
       base: 'object',
       identify: function(v) {
         return (
@@ -43,7 +46,7 @@ exports.mixinMochaAssertions = function(expect) {
         );
       }
     })
-    .addAssertion('<JSONRunResult> [not] to have (passed|succeeded)', function(
+    .addAssertion('<JSONResult> [not] to have (passed|succeeded)', function(
       expect,
       result
     ) {
@@ -56,19 +59,19 @@ exports.mixinMochaAssertions = function(expect) {
       });
     })
     .addAssertion(
-      '<RawRunResult|RawResult> [not] to have (passed|succeeded)',
+      '<SummarizedResult|RawResult> [not] to have (passed|succeeded)',
       function(expect, result) {
         expect(result, '[not] to have property', 'code', 0);
       }
     )
     .addAssertion(
-      '<RawRunResult|JSONRunResult> [not] to have completed with [exit] code <number>',
+      '<SummarizedResult|JSONResult> [not] to have completed with [exit] code <number>',
       function(expect, result, code) {
         expect(result.code, '[not] to be', code);
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have passed (with|having) count <number>',
+      '<JSONResult> [not] to have passed (with|having) count <number>',
       function(expect, result, count) {
         expect(result, '[not] to pass').and('[not] to satisfy', {
           stats: {passes: expect.it('to be', count)}
@@ -76,14 +79,14 @@ exports.mixinMochaAssertions = function(expect) {
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have failed (with|having) count <number>',
+      '<JSONResult> [not] to have failed (with|having) count <number>',
       function(expect, result, count) {
         expect(result, '[not] to have failed').and('[not] to satisfy', {
           stats: {failures: expect.it('to be', count)}
         });
       }
     )
-    .addAssertion('<JSONRunResult> [not] to have failed', function(
+    .addAssertion('<JSONResult> [not] to have failed', function(
       expect,
       result
     ) {
@@ -95,7 +98,7 @@ exports.mixinMochaAssertions = function(expect) {
         failures: expect.it('to be non-empty')
       });
     })
-    .addAssertion('<RawRunResult|RawResult> [not] to have failed', function(
+    .addAssertion('<SummarizedResult|RawResult> [not] to have failed', function(
       expect,
       result
     ) {
@@ -104,7 +107,7 @@ exports.mixinMochaAssertions = function(expect) {
       });
     })
     .addAssertion(
-      '<RawRunResult|RawResult> [not] to have failed (with|having) output <any>',
+      '<SummarizedResult|RawResult> [not] to have failed (with|having) output <any>',
       function(expect, result, output) {
         expect(result, '[not] to satisfy', {
           code: expect.it('to be greater than', 0),
@@ -113,7 +116,7 @@ exports.mixinMochaAssertions = function(expect) {
       }
     )
     .addAssertion(
-      '<RawRunResult|RawResult> [not] to have passed (with|having) output <any>',
+      '<SummarizedResult|RawResult> [not] to have passed (with|having) output <any>',
       function(expect, result, output) {
         expect(result, '[not] to satisfy', {
           code: 0,
@@ -122,24 +125,24 @@ exports.mixinMochaAssertions = function(expect) {
       }
     )
     .addAssertion(
-      '<RawRunResult> [not] to have failed [test] count <number>',
+      '<SummarizedResult> [not] to have failed [test] count <number>',
       function(expect, result, count) {
         expect(result.failing, '[not] to be', count);
       }
     )
     .addAssertion(
-      '<RawRunResult> [not] to have passed [test] count <number>',
+      '<SummarizedResult> [not] to have passed [test] count <number>',
       function(expect, result, count) {
         expect(result.passing, '[not] to be', count);
       }
     )
     .addAssertion(
-      '<RawRunResult> [not] to have pending [test] count <number>',
+      '<SummarizedResult> [not] to have pending [test] count <number>',
       function(expect, result, count) {
         expect(result.pending, '[not] to be', count);
       }
     )
-    .addAssertion('<JSONRunResult> [not] to have test count <number>', function(
+    .addAssertion('<JSONResult> [not] to have test count <number>', function(
       expect,
       result,
       count
@@ -147,25 +150,25 @@ exports.mixinMochaAssertions = function(expect) {
       expect(result.stats.tests, '[not] to be', count);
     })
     .addAssertion(
-      '<JSONRunResult> [not] to have failed [test] count <number>',
+      '<JSONResult> [not] to have failed [test] count <number>',
       function(expect, result, count) {
         expect(result.stats.failures, '[not] to be', count);
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have passed [test] count <number>',
+      '<JSONResult> [not] to have passed [test] count <number>',
       function(expect, result, count) {
         expect(result.stats.passes, '[not] to be', count);
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have pending [test] count <number>',
+      '<JSONResult> [not] to have pending [test] count <number>',
       function(expect, result, count) {
         expect(result.stats.pending, '[not] to be', count);
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have run (test|tests) <string+>',
+      '<JSONResult> [not] to have run (test|tests) <string+>',
       function(expect, result, titles) {
         Array.prototype.slice.call(arguments, 2).forEach(function(title) {
           expect(
@@ -177,7 +180,7 @@ exports.mixinMochaAssertions = function(expect) {
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have failed (test|tests) <string+>',
+      '<JSONResult> [not] to have failed (test|tests) <string+>',
       function(expect, result, titles) {
         Array.prototype.slice.call(arguments, 2).forEach(function(title) {
           expect(result.failures, '[not] to have an item satisfying', {
@@ -187,7 +190,7 @@ exports.mixinMochaAssertions = function(expect) {
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have failed with (error|errors) <any+>',
+      '<JSONResult> [not] to have failed with (error|errors) <any+>',
       function(expect, result, errors) {
         Array.prototype.slice.call(arguments, 2).forEach(function(error) {
           expect(result, '[not] to have failed').and('[not] to satisfy', {
@@ -200,22 +203,23 @@ exports.mixinMochaAssertions = function(expect) {
         });
       }
     )
-    .addAssertion(
-      '<JSONRunResult> [not] to have (error|errors) <any+>',
-      function(expect, result, errors) {
-        Array.prototype.slice.call(arguments, 2).forEach(function(error) {
-          expect(result, '[not] to satisfy', {
-            failures: expect.it('to have an item satisfying', {
-              err: expect
-                .it('to satisfy', error)
-                .or('to satisfy', {message: error})
-            })
-          });
+    .addAssertion('<JSONResult> [not] to have (error|errors) <any+>', function(
+      expect,
+      result,
+      errors
+    ) {
+      Array.prototype.slice.call(arguments, 2).forEach(function(error) {
+        expect(result, '[not] to satisfy', {
+          failures: expect.it('to have an item satisfying', {
+            err: expect
+              .it('to satisfy', error)
+              .or('to satisfy', {message: error})
+          })
         });
-      }
-    )
+      });
+    })
     .addAssertion(
-      '<JSONRunResult> [not] to have passed (test|tests) <string+>',
+      '<JSONResult> [not] to have passed (test|tests) <string+>',
       function(expect, result, titles) {
         Array.prototype.slice.call(arguments, 2).forEach(function(title) {
           expect(result.passes, '[not] to have an item satisfying', {
@@ -225,7 +229,7 @@ exports.mixinMochaAssertions = function(expect) {
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have test order <string> <array>',
+      '<JSONResult> [not] to have test order <string> <array>',
       function(expect, result, state, titles) {
         expect(
           result[state].slice(0, titles.length),
@@ -237,13 +241,13 @@ exports.mixinMochaAssertions = function(expect) {
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have passed test order <array>',
+      '<JSONResult> [not] to have passed test order <array>',
       function(expect, result, titles) {
         expect(result, '[not] to have test order', 'passes', titles);
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have passed test order <string+>',
+      '<JSONResult> [not] to have passed test order <string+>',
       function(expect, result, titles) {
         expect(
           result,
@@ -254,13 +258,13 @@ exports.mixinMochaAssertions = function(expect) {
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have failed test order <array>',
+      '<JSONResult> [not] to have failed test order <array>',
       function(expect, result, titles) {
         expect(result, '[not] to have test order', 'failures', titles);
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have failed test order <string+>',
+      '<JSONResult> [not] to have failed test order <string+>',
       function(expect, result, titles) {
         expect(
           result,
@@ -271,13 +275,13 @@ exports.mixinMochaAssertions = function(expect) {
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have pending test order <array>',
+      '<JSONResult> [not] to have pending test order <array>',
       function(expect, result, titles) {
         expect(result, '[not] to have test order', 'pending', titles);
       }
     )
     .addAssertion(
-      '<JSONRunResult> [not] to have pending test order <string+>',
+      '<JSONResult> [not] to have pending test order <string+>',
       function(expect, result, titles) {
         expect(
           result,
@@ -287,41 +291,39 @@ exports.mixinMochaAssertions = function(expect) {
         );
       }
     )
-    .addAssertion('<JSONRunResult> [not] to have pending tests', function(
+    .addAssertion('<JSONResult> [not] to have pending tests', function(
       expect,
       result
     ) {
       expect(result.stats.pending, '[not] to be greater than', 0);
     })
-    .addAssertion('<JSONRunResult> [not] to have passed tests', function(
+    .addAssertion('<JSONResult> [not] to have passed tests', function(
       expect,
       result
     ) {
       expect(result.stats.passes, '[not] to be greater than', 0);
     })
-    .addAssertion('<JSONRunResult> [not] to have failed tests', function(
+    .addAssertion('<JSONResult> [not] to have failed tests', function(
       expect,
       result
     ) {
       expect(result.stats.failed, '[not] to be greater than', 0);
     })
-    .addAssertion('<JSONRunResult> [not] to have tests', function(
-      expect,
-      result
-    ) {
+    .addAssertion('<JSONResult> [not] to have tests', function(expect, result) {
       expect(result.stats.tests, '[not] to be greater than', 0);
     })
+    .addAssertion('<JSONResult> [not] to have retried test <string>', function(
+      expect,
+      result,
+      title
+    ) {
+      expect(result.tests, '[not] to have an item satisfying', {
+        title: title,
+        currentRetry: expect.it('to be positive')
+      });
+    })
     .addAssertion(
-      '<JSONRunResult> [not] to have retried test <string>',
-      function(expect, result, title) {
-        expect(result.tests, '[not] to have an item satisfying', {
-          title: title,
-          currentRetry: expect.it('to be positive')
-        });
-      }
-    )
-    .addAssertion(
-      '<JSONRunResult> [not] to have retried test <string> <number>',
+      '<JSONResult> [not] to have retried test <string> <number>',
       function(expect, result, title, count) {
         expect(result.tests, '[not] to have an item satisfying', {
           title: title,
@@ -330,13 +332,13 @@ exports.mixinMochaAssertions = function(expect) {
       }
     )
     .addAssertion(
-      '<RawResult|RawRunResult> [not] to contain [output] <any>',
+      '<RawResult|SummarizedResult> [not] to contain [output] <any>',
       function(expect, result, output) {
         expect(result.output, '[not] to satisfy', output);
       }
     )
     .addAssertion(
-      '<RawResult|RawRunResult> to contain [output] once <any>',
+      '<RawResult|SummarizedResult> to contain [output] once <any>',
       function(expect, result, output) {
         if (typeof output === 'string') {
           output = escapeRe(output);
@@ -348,7 +350,7 @@ exports.mixinMochaAssertions = function(expect) {
       }
     )
     .addAssertion(
-      '<RawResult|RawRunResult|JSONRunResult> to have [exit] code <number>',
+      '<RawResult|SummarizedResult|JSONResult> to have [exit] code <number>',
       function(expect, result, code) {
         expect(result.code, 'to be', code);
       }
